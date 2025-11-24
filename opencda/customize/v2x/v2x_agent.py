@@ -8,6 +8,11 @@ from opencda.core.sensing.localization.localization_manager \
     import LocalizationManager
 from opencda.core.sensing.perception.perception_manager \
     import PerceptionManager
+from opencda.customize.v2x.CAservice import CAservice
+from opencda.customize.v2x.CPservice import CPservice
+from opencda.customize.v2x.PCservice import PCservice
+from opencda.customize.v2x.PLDMservice import PLDMservice
+from opencda.customize.v2x.intruderApp import IntruderApp
 
 import os, sys, math
 import time

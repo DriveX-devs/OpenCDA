@@ -209,6 +209,7 @@ class ExtendedPerceptionManager(PerceptionManager):
     def detect(self, ego_pos):
         """
         Detect surrounding objects. Currently only vehicle detection supported.
+        Implementation for pedestrians detection ongoing.
 
         Parameters
         ----------
@@ -224,7 +225,8 @@ class ExtendedPerceptionManager(PerceptionManager):
         self.ego_pos = ego_pos
 
         objects = {'vehicles': [],
-                   'traffic_lights': []}
+                   'traffic_lights': [],
+                   'VRU': []}
 
         if not self.activate:
             objects = self.deactivate_mode(objects)

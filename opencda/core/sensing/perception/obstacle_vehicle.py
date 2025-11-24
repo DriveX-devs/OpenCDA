@@ -24,8 +24,18 @@ def is_vehicle_cococlass(label):
 
     Returns:
         -is_vehicle(bool): Whether this label belongs to the vehicle class
+
+    0 - pedestrian
+    1 - bicycle
+    2 - car
+    3 - motorcycle
+    4 - airplane
+    5 - bus
+    6 - train
+    7 - truck
     """
-    vehicle_class_array = np.array([1, 2, 3, 5, 7], dtype=np.int)
+
+    vehicle_class_array = np.array([2, 5, 7], dtype=np.int)
     return True if 0 in (label - vehicle_class_array) else False
 
 class BoundingBox(object):
@@ -112,6 +122,7 @@ class ObstacleVehicle(object):
             self.velocity = carla.Vector3D(0.0, 0.0, 0.0)
             self.yaw = 0.0
             self.confidence = confidence
+            self.itsType = 'vehicle'
         else:
             if sumo2carla_ids is None:
                 sumo2carla_ids = dict()

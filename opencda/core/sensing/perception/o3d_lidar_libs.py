@@ -17,6 +17,8 @@ from opencda.customize.v2x.aux import PLDMentry
 import opencda.core.sensing.perception.sensor_transformation as st
 from opencda.core.sensing.perception.obstacle_vehicle import \
     is_vehicle_cococlass, ObstacleVehicle
+from opencda.core.sensing.perception.obstacle_pedestrian import \
+     ObstacleVRU
 from opencda.core.sensing.perception.static_obstacle import StaticObstacle
 
 VIRIDIS = np.array(cm.get_cmap('plasma').colors)
@@ -95,6 +97,7 @@ def o3d_visualizer_init(actor_id):
         Initialize open3d visualizer.
 
     """
+    # o3d.visualization.draw_geometries([o3d.geometry.TriangleMesh.create_coordinate_frame()]) #test
     vis = o3d.visualization.Visualizer()
     vis.create_window(window_name=str(actor_id),
                       width=800,
@@ -102,8 +105,12 @@ def o3d_visualizer_init(actor_id):
                       left=480,
                       top=270)
     vis.get_render_option().background_color = [0, 0, 0]
-    vis.get_render_option().point_size = 1
+    vis.get_render_option().point_size = 0.5
     vis.get_render_option().show_coordinate_frame = True
+    vis.get_view_control().camera_local_translate(10, 0, 0)
+    # ctr.set_zoom(5)
+    # ctr.set_constant_z_near(5)
+    # ctr.scale(2)
 
     return vis
 
@@ -140,7 +147,7 @@ def o3d_visualizer_show(vis, count, point_cloud, objects, LDM=False):
     LDM_geometries = []
     for key, object_list in objects.items():
         # we only draw vehicles for now
-        if key != 'vehicles':
+        if key != 'vehicles' and key != 'VRU':
             continue
         for object_ in object_list:
             if LDM is True:
@@ -173,7 +180,7 @@ def o3d_visualizer_show(vis, count, point_cloud, objects, LDM=False):
     time.sleep(0.001)
 
     for key, object_list in objects.items():
-        if key != 'vehicles':
+        if key != 'vehicles' and key != 'VRU':
             continue
         for object_ in object_list:
             if object_.o3d_obb is not None:
@@ -219,46 +226,46 @@ def o3d_visualizer_showLDM(vis, count, point_cloud, objects, groundTruth):
     LDM_geometries = []
     for key, object_list in objects.items():
         # we only draw vehicles for now
-        if key != 'vehicles':
+        if key != 'vehicles' and key != 'VRU':
             continue
         for object_ in object_list:
             if object_.perception.line_set is not None:
                 geometry = object_.perception.line_set
-                if object_.connected:
+                if not object_.detected:
                     colors = [[0, 1, 0] for _ in range(12)]
                     geometry.colors = o3d.utility.Vector3dVector(colors)
-                elif not object_.connected and object_.onSight and object_.tracked:
+                elif object_.detected and object_.onSight and object_.tracked:
                     colors = [[1, 0, 0] for _ in range(12)]
                     geometry.colors = o3d.utility.Vector3dVector(colors)
-                elif not object_.connected and not object_.onSight and object_.CPM:
+                elif object_.detected and not object_.onSight and object_.CPM:
                     colors = [[1, 0.6, 0] for _ in range(12)]
                     geometry.colors = o3d.utility.Vector3dVector(colors)
-                elif not object_.connected and not object_.onSight and object_.tracked:
+                elif object_.detected and not object_.onSight and object_.tracked:
                     colors = [[0.7, 0, 0] for _ in range(12)]
                     geometry.colors = o3d.utility.Vector3dVector(colors)
                 else:
                     continue
             else:
                 geometry = object_.perception.o3d_bbx
-                if object_.connected:
+                if not object_.detected:
                     geometry.color = (0, 1, 0)
-                elif not object_.connected and object_.onSight and object_.tracked:
+                elif object_.detected and object_.onSight and object_.tracked:
                     geometry.color = (1, 0, 0)
-                elif not object_.connected and not object_.onSight and object_.CPM:
+                elif object_.detected and not object_.onSight and object_.CPM:
                     geometry.color = (1, 0.6, 0)
-                elif not object_.connected and object_.tracked:
+                elif object_.detected and object_.tracked:
                     geometry.color = (0.5, 0, 0)
                 else:
                     continue
-
             vis.add_geometry(geometry)
+
             LDM_geometries.append(geometry)
 
     # vis.add_geometry(test_rotation())
 
     for key, object_list in groundTruth.items():
         # we only draw vehicles for now
-        if key != 'vehicles':
+        if key != 'vehicles' and key != 'VRU':
             continue
         for object_ in object_list:
             geometry = object_.o3d_bbx
@@ -387,14 +394,27 @@ def o3d_camera_lidar_fusion(objects,
                                  dtype=np.int), axis=0)[0][0]
         y_common = mode(np.array(np.abs(select_points[:, 1]),
                                  dtype=np.int), axis=0)[0][0]
-        points_inlier = (np.abs(select_points[:, 0]) > x_common - 3) & \
-                        (np.abs(select_points[:, 0]) < x_common + 3) & \
-                        (np.abs(select_points[:, 1]) > y_common - 3) & \
-                        (np.abs(select_points[:, 1]) < y_common + 3)
+        points_inlier = (np.abs(select_points[:, 0]) > x_common - 5) & \
+                        (np.abs(select_points[:, 0]) < x_common + 5) & \
+                        (np.abs(select_points[:, 1]) > y_common - 5) & \
+                        (np.abs(select_points[:, 1]) < y_common + 5)
         select_points = select_points[points_inlier]
 
-        if select_points.shape[0] < 4:
+        min_points_required = {  # Map label to minimum required points
+            2: 4,  # vehicle
+            5: 4,  # tuck
+            7: 4,  # bus
+            0: 4,  # pedestrian
+            1: 4,  # bicycle
+            3: 4,  # motorcycle
+        }
+
+        if select_points.shape[0] < min_points_required.get(label, 0):
             continue
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(select_points)
+        labels = np.array(pcd.cluster_dbscan(eps=0.7, min_points=min_points_required.get(label, 0), print_progress=False))
 
         # to visualize 3d lidar points in o3d visualizer, we need to
         # revert the x coordinates
@@ -441,6 +461,257 @@ def o3d_camera_lidar_fusion(objects,
             else:
                 objects['vehicles'] = [obstacle_vehicle]
         # todo: refine the category
+        elif label in (0, 1, 3):
+            obstacle_VRU = ObstacleVRU(corner, aabb, confidence=confidence)
+            if label == 0:
+                obstacle_VRU.itsType = 'pedestrian'
+            elif label == 1:
+                obstacle_VRU.itsType = 'bicycle'
+            elif label == 3:
+                obstacle_VRU.itsType = 'motorcycle'
+            if obb is not None:
+                obstacle_VRU.o3d_obb = obb
+                obstacle_VRU.bounding_box.extent.x = obb.extent[0] / 2
+                obstacle_VRU.bounding_box.extent.y = obb.extent[1] / 2
+                yaw = ego_pos.rotation.yaw - np.degrees(np.arctan2(np.array(obb.R)[1, 0], np.array(obb.R)[0, 0]))
+                # if label == 0:
+                #     obstacle_VRU.itsType = 'pedestrian'
+                # elif label == 1:
+                #     obstacle_VRU.itsType = 'bicycle'
+                # elif label == 3:
+                #     obstacle_VRU.itsType = 'motorcycle'
+
+                obstacle_VRU.yaw = yaw
+            if 'VRU' in objects:
+                objects['VRU'].append(obstacle_VRU)
+            else:
+                objects['VRU'] = [obstacle_VRU]
+        # we regard or other obstacle rather than vehicle as static class
+        else:
+            static_obstacle = StaticObstacle(corner, aabb)
+            if 'static' in objects:
+                objects['static'].append(static_obstacle)
+            else:
+                objects['static'] = [static_obstacle]
+
+    return objects
+
+def o3d_camera_lidar_fusion2(objects,
+                            yolo_bbx,
+                            lidar_3d,
+                            projected_lidar,
+                            lidar_sensor,
+                            ego_pos = None):
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(lidar_3d[:, :3])
+    labels = np.array(pcd.cluster_dbscan(eps=0.7, min_points=10, print_progress=False))
+    max_label = labels.max()
+    bounding_boxes = []
+    for i in range(max_label + 1):
+        indices = np.where(labels == i)[0]
+        cluster_points = np.asarray(pcd.points)[indices]
+        if len(cluster_points) > 4:
+            cluster_pcd = o3d.geometry.PointCloud()
+            cluster_pcd.points = o3d.utility.Vector3dVector(cluster_points)
+            aabb = cluster_pcd.get_axis_aligned_bounding_box()
+            obb = None
+            try:
+                obb = cluster_pcd.get_oriented_bounding_box()
+                obb.color = (0, 1, 0)
+            except RuntimeError as e:
+                # print("Unable to compute the oriented bounding box:", e)
+                pass
+            # get the eight corner of the bounding boxes.
+            corner = np.asarray(aabb.get_box_points())
+            # covert back to unreal coordinate
+            corner[:, :1] = -corner[:, :1]
+            corner = corner.transpose()
+            # extend (3, 8) to (4, 8) for homogenous transformation
+            corner = np.r_[corner, [np.ones(corner.shape[1])]]
+            # project to world reference
+            corner = st.sensor_to_world(corner, lidar_sensor.get_transform())
+            corner = corner.transpose()[:, :3]
+
+            obstacle_vehicle = ObstacleVehicle(corner, aabb, confidence=0.9)
+            if obb is not None:
+                obstacle_vehicle.o3d_obb = obb
+                obstacle_vehicle.bounding_box.extent.x = obb.extent[0]/2
+                obstacle_vehicle.bounding_box.extent.y = obb.extent[1]/2
+                yaw = ego_pos.rotation.yaw - np.degrees(np.arctan2(np.array(obb.R)[1, 0], np.array(obb.R)[0, 0]))
+                obstacle_vehicle.yaw = yaw
+            if 'vehicles' in objects:
+                objects['vehicles'].append(obstacle_vehicle)
+            else:
+                objects['vehicles'] = [obstacle_vehicle]
+
+    return objects
+
+def o3d_camera_lidar_fusion3(objects,
+                            yolo_bbx,
+                            lidar_3d,
+                            projected_lidar,
+                            lidar_sensor,
+                            ego_pos = None):
+    """
+    Utilize the 3D lidar points to extend the 2D bounding box
+    from camera to 3D bounding box under world coordinates.
+
+    Parameters
+    ----------
+    objects : dict
+        The dictionary contains all object detection results.
+
+    yolo_bbx : torch.Tensor
+        Object detection bounding box at current photo from yolov5,
+        shape (n, 5)->(n, [x1, y1, x2, y2, label])
+
+    lidar_3d : np.ndarray
+        Raw 3D lidar points in lidar coordinate system.
+
+    projected_lidar : np.ndarray
+        3D lidar points projected to the camera space.
+
+    lidar_sensor : carla.sensor
+        The lidar sensor.
+
+    ego_pos : carla.transform
+        The ego vehicle's transform.
+    Returns
+    -------
+    objects : dict
+        The update object dictionary that contains 3d bounding boxes.
+    """
+
+    # convert torch tensor to numpy array first
+    if yolo_bbx.is_cuda:
+        yolo_bbx = yolo_bbx.cpu().detach().numpy()
+    else:
+        yolo_bbx = yolo_bbx.detach().numpy()
+
+    for i in range(yolo_bbx.shape[0]):
+        detection = yolo_bbx[i]
+        # 2d bbx coordinates
+        x1, y1, x2, y2 = int(detection[0]), int(detection[1]), \
+            int(detection[2]), int(detection[3])
+        label = int(detection[5])
+        confidence = float(detection[4])
+
+        # choose the lidar points in the 2d yolo bounding box
+        points_in_bbx = \
+            (projected_lidar[:, 0] > x1) & (projected_lidar[:, 0] < x2) & \
+            (projected_lidar[:, 1] > y1) & (projected_lidar[:, 1] < y2) & \
+            (projected_lidar[:, 2] > 0.0)
+        # ignore intensity channel
+        select_points = lidar_3d[points_in_bbx][:, :-1]
+
+        if select_points.shape[0] == 0:
+            continue
+
+        min_points_required = {  # Map label to minimum required points
+            2: 4,  # vehicle
+            5: 4,  # tuck
+            7: 4,  # bus
+            0: 4,  # pedestrian
+            1: 4,  # bicycle
+            3: 4,  # motorcycle
+        }
+
+        if select_points.shape[0] < min_points_required.get(label, 0):
+            continue
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(select_points)
+        labels = np.array(pcd.cluster_dbscan(eps=0.7, min_points=3, print_progress=False))
+
+        if label in [1, 3] and (np.unique(labels) != -1).sum() > 1:
+            # Combine all cluster points if it is a bicycle or motorcycle
+            # to also include the rider
+            final_object_points = select_points[labels != -1]
+
+        else:
+            unique_labels, counts = np.unique(labels[labels != -1], return_counts=True)
+            if len(unique_labels) == 0:
+                continue
+
+            main_cluster_label = unique_labels[counts.argmax()]
+            main_cluster_indices = np.where(labels == main_cluster_label)[0]
+            final_object_points = select_points[main_cluster_indices]
+
+
+        if final_object_points.shape[0] < 4:
+            continue
+
+        # to visualize 3d lidar points in o3d visualizer, we need to
+        # revert the x coordinates
+        final_object_points[:, :1] = -final_object_points[:, :1]
+
+        # create o3d.PointCloud object
+        o3d_pointcloud = o3d.geometry.PointCloud()
+        o3d_pointcloud.points = o3d.utility.Vector3dVector(final_object_points)
+        o3d_pointcloud.paint_uniform_color([0, 1, 1])
+        # add o3d bounding box
+        aabb = o3d_pointcloud.get_axis_aligned_bounding_box()
+        aabb.color = (1, 0, 0)
+
+        obb = None
+        if np.asarray(o3d_pointcloud.points).shape[0] >= 4:
+            try:
+                obb = o3d_pointcloud.get_oriented_bounding_box()
+                obb.color = (0, 1, 0)
+            except RuntimeError as e:
+                print("Unable to compute the oriented bounding box:", e)
+                pass
+
+        # get the eight corner of the bounding boxes.
+        corner = np.asarray(aabb.get_box_points())
+        # covert back to unreal coordinate
+        corner[:, :1] = -corner[:, :1]
+        corner = corner.transpose()
+        # extend (3, 8) to (4, 8) for homogenous transformation
+        corner = np.r_[corner, [np.ones(corner.shape[1])]]
+        # project to world reference
+        corner = st.sensor_to_world(corner, lidar_sensor.get_transform())
+        corner = corner.transpose()[:, :3]
+
+        if is_vehicle_cococlass(label):
+            obstacle_vehicle = ObstacleVehicle(corner, obb, confidence=confidence)
+            if obb is not None:
+                obstacle_vehicle.o3d_obb = obb
+                obstacle_vehicle.bounding_box.extent.x = obb.extent[0]/2
+                obstacle_vehicle.bounding_box.extent.y = obb.extent[1]/2
+                yaw = ego_pos.rotation.yaw - np.degrees(np.arctan2(np.array(obb.R)[1, 0], np.array(obb.R)[0, 0]))
+                obstacle_vehicle.yaw = yaw
+            if 'vehicles' in objects:
+                objects['vehicles'].append(obstacle_vehicle)
+            else:
+                objects['vehicles'] = [obstacle_vehicle]
+        # todo: refine the category
+        elif label in (0, 1, 3):
+            obstacle_VRU = ObstacleVRU(corner, obb, confidence=confidence)
+            if label == 0:
+                obstacle_VRU.itsType = 'pedestrian'
+            elif label == 1:
+                obstacle_VRU.itsType = 'bicycle'
+            elif label == 3:
+                obstacle_VRU.itsType = 'motorcycle'
+            if obb is not None:
+                obstacle_VRU.o3d_obb = obb
+                obstacle_VRU.bounding_box.extent.x = obb.extent[0] / 2
+                obstacle_VRU.bounding_box.extent.y = obb.extent[1] / 2
+                yaw = ego_pos.rotation.yaw - np.degrees(np.arctan2(np.array(obb.R)[1, 0], np.array(obb.R)[0, 0]))
+                # if label == 0:
+                #     obstacle_VRU.itsType = 'pedestrian'
+                # elif label == 1:
+                #     obstacle_VRU.itsType = 'bicycle'
+                # elif label == 3:
+                #     obstacle_VRU.itsType = 'motorcycle'
+
+                obstacle_VRU.yaw = yaw
+            if 'VRU' in objects:
+                objects['VRU'].append(obstacle_VRU)
+            else:
+                objects['VRU'] = [obstacle_VRU]
         # we regard or other obstacle rather than vehicle as static class
         else:
             static_obstacle = StaticObstacle(corner, aabb)

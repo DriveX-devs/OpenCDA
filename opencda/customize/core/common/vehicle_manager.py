@@ -29,6 +29,10 @@ from opencda.customize.v2x.LDMutils import get_o3d_bbx
 from opencda.customize.platooning.states import FSM
 from opencda.customize.platooning.states import I_FSM
 import time
+import collections
+import csv
+import os
+from pathlib import Path
 
 
 class ExtendedVehicleManager(VehicleManager):
@@ -160,6 +164,8 @@ class ExtendedVehicleManager(VehicleManager):
         if not self.pldm:
             self.LDM = LDM(self, self.v2xAgent, visualize=self.lidar_visualize)
 
+
+
     def get_time_ms(self):
         return self.map_manager.world.get_snapshot().elapsed_seconds * 1000
 
@@ -180,6 +186,7 @@ class ExtendedVehicleManager(VehicleManager):
         objects = self.perception_manager.detect(ego_pos)
         self.sensorObjects = objects['vehicles']
         detected_n = len(objects['vehicles'])
+
         file_detection = (time.time_ns() / 1000) - file_timestamp
         # ------------------LDM patch------------------------
         self.time = self.map_manager.world.get_snapshot().elapsed_seconds
@@ -246,13 +253,13 @@ class ExtendedVehicleManager(VehicleManager):
 
     def translateDetections(self, object_list):
         ego_pos, ego_spd, objects = self.getInfo()
-        returnedObjects = []
+        returnedObjectsV = []
         for obj in object_list['vehicles']:
             if obj.carla_id == -1:
                 continue  # If object can't be matched with a CARLA vehicle, we ignore it
-            dist = math.sqrt(
-                math.pow((obj.location.x - ego_pos.location.x), 2) + math.pow((obj.location.y - ego_pos.location.y),
-                                                                          2))
+            # dist = math.sqrt(
+            #     math.pow((obj.location.x - ego_pos.location.x), 2) + math.pow((obj.location.y - ego_pos.location.y),
+            #                                                               2))
             # yaw = self.perception_manager.carla_world.get_actors().find(obj.carla_id).get_transform().rotation.yaw
             # print("Carla yaw: ", yaw, " Opencda yaw: ", obj.yaw)
             LDMobj = Perception(obj.location.x,
@@ -263,13 +270,87 @@ class ExtendedVehicleManager(VehicleManager):
                                 obj.confidence)
             LDMobj.xSpeed = obj.velocity.x
             LDMobj.ySpeed = obj.velocity.y
-            # LDMobj.yaw = obj.yaw
-            # TODO: this is a workaround, pose estimation in o3d_pointcloud.get_oriented_bounding_box() is not reliable
-            curr_wpt = self.map_manager.world.get_map().get_waypoint(carla.Location(x=obj.location.x, y=obj.location.y, z=0.0))
-            LDMobj.yaw = curr_wpt.transform.rotation.yaw
+            LDMobj.yaw = obj.yaw
+            LDMobj.id = obj.carla_id
+            returnedObjectsV.append(LDMobj)
+
+        returnedObjectsP = []
+        for obj in object_list['VRU']:
+            if obj.carla_id == -1:
+                continue
+            # dist = math.sqrt(
+            #     math.pow((obj.location.x - ego_pos.location.x), 2) + math.pow((obj.location.y - ego_pos.location.y),
+            #                                                               2))
+            # yaw = self.perception_manager.carla_world.get_actors().find(obj.carla_id).get_transform().rotation.yaw
+            # print("Carla yaw: ", yaw, " Opencda yaw: ", obj.yaw)
+            LDMobj = Perception(obj.location.x,
+                                obj.location.y,
+                                obj.bounding_box.extent.y * 2,  # width
+                                obj.bounding_box.extent.x * 2,  # length
+                                self.time,
+                                obj.confidence,
+                                itsType=obj.itsType)
+            LDMobj.xSpeed = obj.velocity.x
+            LDMobj.ySpeed = obj.velocity.y
+            LDMobj.yaw = obj.yaw
+            LDMobj.id = obj.carla_id
+            returnedObjectsP.append(LDMobj)
+            # print(f"Updating LDM - ID {obj.carla_id} ")
+        # ped_list is retrieved from CARLA, while returnedObjects is the info from sensors.
+        # if we sense a pedestrian close to a location where the server is telling us that there is a pedestrian
+        # we assign the ID to the object obstacle pedestrian
+
+
+        return {'vehicles': returnedObjectsV,
+                'VRU': returnedObjectsP}
+    def translateDetectionsPedestrians(self, object_list):
+        ego_pos, ego_spd, objects = self.getInfo()
+        returnedObjects = []
+        for obj in object_list['VRU']:
+            # dist = math.sqrt(
+            #     math.pow((obj.location.x - ego_pos.location.x), 2) + math.pow((obj.location.y - ego_pos.location.y),
+            #                                                               2))
+            # yaw = self.perception_manager.carla_world.get_actors().find(obj.carla_id).get_transform().rotation.yaw
+            # print("Carla yaw: ", yaw, " Opencda yaw: ", obj.yaw)
+            if obj.itsType != 'pedestrian':
+                continue
+            LDMobj = Perception(obj.location.x,
+                                obj.location.y,
+                                obj.bounding_box.extent.y * 2,
+                                obj.bounding_box.extent.x * 2,
+                                self.time,
+                                obj.confidence,
+                                itsType=obj.itsType)
+            LDMobj.xSpeed = 0
+            LDMobj.ySpeed = 0
+            LDMobj.yaw = 0
             LDMobj.id = obj.carla_id
             returnedObjects.append(LDMobj)
-        return {'vehicles': returnedObjects}
+
+        # ped_list is retrieved from CARLA, while returnedObjects is the info from sensors.
+        # if we sense a pedestrian close to a location where the server is telling us that there is a pedestrian
+        # we assign the ID to the object obstacle pedestrian
+
+        ped_list = self.map_manager.world.get_actors()
+        ped_list = [p for p in ped_list if p.get_location().distance(ego_pos.location) < 50]
+
+        for i, walker in enumerate(returnedObjects):
+            for p in ped_list:
+                p_loc = p.get_location()
+                if abs(p_loc.x - walker.xPosition) <= 3.0 and \
+                        abs(p_loc.y - walker.yPosition) <= 3.0:
+                    x = round(walker.xPosition, 2)
+                    y = round(walker.yPosition, 2)
+                    dist = round(math.sqrt(
+                        math.pow((x - ego_pos.location.x), 2) + math.pow((y - ego_pos.location.y),
+                                                                         2)), 2)
+                    print(f'Pedestrian {p.id} detected {dist} meters away by vehicle {self.vehicle.id}'
+                          f' at position (x = {x}, y = {y})')
+                    # assign pedestrian ID to obstacle pedestrian object
+                    walker.id = p.id
+
+
+        return
 
     def getInfo(self):
         """
@@ -494,3 +575,5 @@ class ExtendedVehicleManager(VehicleManager):
 
         obj.o3d_bbx = self.LDMobj_to_o3d_bbx(obj)
         self.LDM[id].insertPerception(obj)
+
+

@@ -26,6 +26,9 @@ from opencda.core.map.map_manager import MapManager
 from opencda.core.common.data_dumper import DataDumper
 from opencda.customize.platooning.platooning_behavior_agent import PlatooningBehaviorAgentExtended
 from opencda.core.application.platooning.intruder_behavior_agent import IntruderBehaviorAgent
+import matplotlib.pyplot as plt
+import numpy as np
+import time
 
 
 class VehicleManager(object):
@@ -150,6 +153,7 @@ class VehicleManager(object):
 
         cav_world.update_vehicle_manager(self)
 
+
         # self.msvan3tAgent = Msvan3tAgent(cav_world, self.vid, self.perception_manager, self.localizer, self.carla_map, self.vehicle)
 
     def set_destination(
@@ -238,6 +242,8 @@ class VehicleManager(object):
             target_speed, target_pos = self.agent.run_step(target_speed)
 
         control = self.controller.run_step(target_speed, target_pos, target_acceleration)
+
+
 
         # dump data
         if self.data_dumper:

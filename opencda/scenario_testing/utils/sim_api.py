@@ -14,6 +14,7 @@ import json
 from random import shuffle
 from omegaconf import OmegaConf
 from omegaconf.listconfig import ListConfig
+import logging
 
 import carla
 import numpy as np
@@ -47,6 +48,7 @@ def car_blueprint_filter(blueprint_library, carla_version='0.9.11'):
     blueprints : list
         The list of suitable blueprints for vehicles.
     """
+
 
     if carla_version == '0.9.11':
         print('old version')
@@ -163,7 +165,7 @@ class ScenarioManager:
         CAV World that contains the information of all CAVs.
 
     carla_map : carla.map
-        Car;a HD Map.
+        Carla HD Map.
 
     """
 
@@ -273,7 +275,7 @@ class ScenarioManager:
                                map_helper=None,
                                data_dump=False,
                                pldm=False,
-                               log_dir=None):
+                               log_dir=None,port=8000):
         """
         Create a list of single CAVs.
 
@@ -296,6 +298,19 @@ class ScenarioManager:
         """
         print('Creating single CAVs.')
         # By default, we use lincoln as our cav model.
+        traffic_config = self.scenario_params['carla_traffic_manager']
+        if port != 8000:
+            tm = self.client.get_trafficmanager(port)
+        else:
+            tm = self.client.get_trafficmanager()
+
+        tm.set_global_distance_to_leading_vehicle(
+            traffic_config['global_distance'])
+        tm.set_synchronous_mode(traffic_config['sync_mode'])
+        tm.set_osm_mode(traffic_config['set_osm_mode'])
+        tm.global_percentage_speed_difference(
+            traffic_config['global_speed_perc'])
+
         default_model = 'vehicle.lincoln.mkz2017' \
             if self.carla_version == '0.9.11' else 'vehicle.lincoln.mkz_2017'
 
@@ -346,27 +361,7 @@ class ScenarioManager:
                 # self.world.debug.draw_string(ego_pos.location, str(self.vehicle.id), False, carla.Color(200, 200, 0))
 
 
-            # if 'intruder' in cav_config['v2x']:
-            #     if cav_config['v2x']['intruder']:
-            #         cav_vehicle_bp.set_attribute('color', '255, 0, 0')
-            #         vehicle = self.world.spawn_actor(cav_vehicle_bp, spawn_transform)
-            #
-            #         vehicle_manager = ExtendedVehicleManager(
-            #             vehicle, cav_config, 'intruder',
-            #             self.carla_map, self.cav_world,
-            #             current_time=self.scenario_params['current_time'],
-            #             data_dumping=data_dump,
-            #             pldm=False, log_dir=log_dir)
-            #     else:
-            #         cav_vehicle_bp.set_attribute('color', '0, 0, 255')
-            #         vehicle = self.world.spawn_actor(cav_vehicle_bp, spawn_transform)
-            #         # create vehicle manager for each cav
-            #         vehicle_manager = ExtendedVehicleManager(
-            #             vehicle, cav_config, application,
-            #             self.carla_map, self.cav_world,
-            #             current_time=self.scenario_params['current_time'],
-            #             data_dumping=data_dump,
-            #             pldm=pldm, log_dir=log_dir)
+
             if 'ms-van3t' in cav_config['v2x']:
                 cav_vehicle_bp.set_attribute('color', '0, 0, 255')
                 if 'intruder' in cav_config['v2x']:
@@ -394,6 +389,14 @@ class ScenarioManager:
                     data_dumping=data_dump,
                     pldm=pldm, log_dir=log_dir)
 
+            vehicle.set_autopilot(True, tm.get_port())
+
+            if 'vehicle_speed_perc' in cav_config:
+                tm.vehicle_percentage_speed_difference(
+                    vehicle, cav_config['vehicle_speed_perc'])
+            tm.auto_lane_change(vehicle, traffic_config['auto_lane_change'])
+            tm.ignore_lights_percentage(vehicle, 0)
+
             self.world.tick()
 
             vehicle_manager.v2x_manager.set_platoon(None)
@@ -407,18 +410,53 @@ class ScenarioManager:
                 destination,
                 clean=True)
 
+
             single_cav_list.append(vehicle_manager)
 
         return single_cav_list
 
     def create_vehicle_manager_auto(self, application,
-                               map_helper=None,
-                               data_dump=False,
-                               pldm=False,
-                               log_dir=None,
-                               port=8000):
+                                           map_helper=None,
+                                           data_dump=False,
+                                           x=0, y=0, z=0,
+                                           number=1,
+                                           random_bp=False,
+                                           spawnPoint=None):
+        single_cav_list = []
+        number = len(self.scenario_params['scenario']['single_cav_list'])
+        for i in range(number):
+            cav_config = self.scenario_params['scenario']['single_cav_list'][i]
+            platoon_base = OmegaConf.create({'platoon': self.scenario_params.get('platoon_base', {})})
+            cav_config = OmegaConf.merge(self.scenario_params['vehicle_base'],
+                                         platoon_base,
+                                         cav_config)
+            spawn_transform = carla.Transform(
+                carla.Location(
+                    x=cav_config['spawn_position'][0],
+                    y=cav_config['spawn_position'][1],
+                    z=cav_config['spawn_position'][2]),
+                carla.Rotation(
+                    pitch=cav_config['spawn_position'][5],
+                    yaw=cav_config['spawn_position'][4],
+                    roll=cav_config['spawn_position'][3]))
+
+            cav = self.create_single_vehicle_manager_auto(application, map_helper, data_dump, i, random_bp, number=i,
+                                                          spawnPoint=spawn_transform)
+            for c in cav:
+                single_cav_list.append(c)
+
+        return single_cav_list
+        
+
+    def create_single_vehicle_manager_auto(self, application,
+                                           map_helper=None,
+                                           data_dump=False,
+                                           x=0, y=0, z=0,
+                                           number=1,
+                                           random_bp=False,
+                                           spawnPoint=None):
         """
-        Create a list of single CAVs to be controlled by carla's traffic manager.
+        Create a list of single CAVs.
 
         Parameters
         ----------
@@ -432,155 +470,86 @@ class ScenarioManager:
         data_dump : bool
             Whether to dump sensor data.
 
-        port : int
-            The port number of the traffic manager.
-
         Returns
         -------
         single_cav_list : list
             A list contains all single CAVs' vehicle manager.
         """
-        print('Creating single CAVs.')
-
-        traffic_config = self.scenario_params['carla_traffic_manager']
-        if port != 8000:
-            tm = self.client.get_trafficmanager(port)
-        else:
-            tm = self.client.get_trafficmanager()
-
-        tm.set_global_distance_to_leading_vehicle(
-            traffic_config['global_distance'])
-        tm.set_synchronous_mode(traffic_config['sync_mode'])
-        tm.set_osm_mode(traffic_config['set_osm_mode'])
-        tm.global_percentage_speed_difference(
-            traffic_config['global_speed_perc'])
+        print('Creating single CAV.')
         # By default, we use lincoln as our cav model.
         default_model = 'vehicle.lincoln.mkz2017' \
             if self.carla_version == '0.9.11' else 'vehicle.lincoln.mkz_2017'
 
-        cav_vehicle_bp = \
-            self.world.get_blueprint_library().find(default_model)
+        if random_bp:
+            cav_vehicle_bp = \
+                random.choice(self.world.get_blueprint_library().filter('vehicle.*'))
+        else:
+            cav_vehicle_bp = \
+                self.world.get_blueprint_library().find(default_model)
         single_cav_list = []
 
-        for i, cav_config in enumerate(
-                self.scenario_params['scenario']['single_cav_list']):
-            # in case the cav wants to join a platoon later
-            # it will be empty dictionary for single cav application
-            platoon_base = OmegaConf.create({'platoon': self.scenario_params.get('platoon_base', {})})
-            cav_config = OmegaConf.merge(self.scenario_params['vehicle_base'],
-                                         platoon_base,
-                                         cav_config)
-            # if the spawn position is a single scalar, we need to use map
-            # helper to transfer to spawn transform
-            if 'spawn_special' not in cav_config:
-                spawn_transform = carla.Transform(
-                    carla.Location(
-                        x=cav_config['spawn_position'][0],
-                        y=cav_config['spawn_position'][1],
-                        z=cav_config['spawn_position'][2]),
-                    carla.Rotation(
-                        pitch=cav_config['spawn_position'][5],
-                        yaw=cav_config['spawn_position'][4],
-                        roll=cav_config['spawn_position'][3]))
-            else:
-                # spawn_transform = map_helper(self.carla_version,
-                #                             cav_config['spawn_special'][0])
-                transform_point = carla.Transform(carla.Location(x=-1202.0827,
-                                                                 y=458.2501,
-                                                                 z=0.3),
-                                                  carla.Rotation(yaw=-20.4866))
+        # in case the cav wants to join a platoon later
+        # it will be empty dictionary for single cav application
+        cav_config = self.scenario_params['scenario']['single_cav_list'][number]
+        platoon_base = OmegaConf.create({'platoon': self.scenario_params.get('platoon_base', {})})
+        cav_config = OmegaConf.merge(self.scenario_params['vehicle_base'],
+                                     platoon_base,
+                                     cav_config)
 
-                begin_point = carla.Transform(carla.Location(x=-16.7102,
-                                                             y=15.3622,
-                                                             z=0.3),
-                                              carla.Rotation(yaw=-20.4866))
+        self.world.get_actors()
+        actor_list = self.world.get_actors()
+        vehicles = actor_list.filter('vehicle.*')
+        spawnPoints = self.world.get_map().get_spawn_points()
 
-                transform_point.location.x = transform_point.location.x + cav_config['spawn_special'][0] * \
-                                             (begin_point.location.x -
-                                              transform_point.location.x)
-                transform_point.location.y = transform_point.location.y + cav_config['spawn_special'][0] * \
-                                             (begin_point.location.y -
-                                              transform_point.location.y)
-                spawn_transform = transform_point
-                # self.world.debug.draw_string(ego_pos.location, str(self.vehicle.id), False, carla.Color(200, 200, 0))
+        # iterate over the spawn points and do self.world.debug.draw_string(spawnPoints[i].location, str(round(i)), False, carla.Color(200, 200, 0), 10)
+        for i in range(len(spawnPoints)):
+            x = spawnPoints[i].location.x
+            y = spawnPoints[i].location.y
+            text = f"{round(i)} - ({x},{y})"
+            self.world.debug.draw_string(spawnPoints[i].location, text, False, carla.Color(200, 200, 0), 10)
 
 
-            # if 'intruder' in cav_config['v2x']:
-            #     if cav_config['v2x']['intruder']:
-            #         cav_vehicle_bp.set_attribute('color', '255, 0, 0')
-            #         vehicle = self.world.spawn_actor(cav_vehicle_bp, spawn_transform)
-            #
-            #         vehicle_manager = ExtendedVehicleManager(
-            #             vehicle, cav_config, 'intruder',
-            #             self.carla_map, self.cav_world,
-            #             current_time=self.scenario_params['current_time'],
-            #             data_dumping=data_dump,
-            #             pldm=False, log_dir=log_dir)
-            #     else:
-            #         cav_vehicle_bp.set_attribute('color', '0, 0, 255')
-            #         vehicle = self.world.spawn_actor(cav_vehicle_bp, spawn_transform)
-            #         # create vehicle manager for each cav
-            #         vehicle_manager = ExtendedVehicleManager(
-            #             vehicle, cav_config, application,
-            #             self.carla_map, self.cav_world,
-            #             current_time=self.scenario_params['current_time'],
-            #             data_dumping=data_dump,
-            #             pldm=pldm, log_dir=log_dir)
-            if 'ms-van3t' in cav_config['v2x']:
-                cav_vehicle_bp.set_attribute('color', '0, 0, 255')
-                if 'intruder' in cav_config['v2x']:
-                    cav_vehicle_bp.set_attribute('color', '255, 0, 0')
-                # print ('transform:', spawn_transform)
-                vehicle = self.world.spawn_actor(cav_vehicle_bp, spawn_transform)
-                # create vehicle manager for each cav
-                vehicle_manager = ExtendedVehicleManager(
-                    vehicle, cav_config, application,
-                    self.carla_map, self.cav_world,
-                    current_time=self.scenario_params['current_time'],
-                    data_dumping=data_dump,
-                    pldm=pldm, log_dir=log_dir, ms_vanet=True)
+        cav_vehicle_bp.set_attribute('color', '0, 255, 0')
 
-                vehicle.set_autopilot(True, tm.get_port())
-                if 'vehicle_speed_perc' in cav_config:
-                    tm.vehicle_percentage_speed_difference(
-                        vehicle, cav_config['vehicle_speed_perc'])
-                tm.auto_lane_change(vehicle, traffic_config['auto_lane_change'])
-                tm.ignore_lights_percentage(vehicle, 0)
-            else:
-                if 'spawn_special' not in cav_config:
-                    cav_vehicle_bp.set_attribute('color', '0, 0, 255')
-                else:
-                    cav_vehicle_bp.set_attribute('color', '255, 0, 0')
-                vehicle = self.world.spawn_actor(cav_vehicle_bp, spawn_transform)
-                # create vehicle manager for each cav
-                vehicle_manager = ExtendedVehicleManager(
-                    vehicle, cav_config, application,
-                    self.carla_map, self.cav_world,
-                    current_time=self.scenario_params['current_time'],
-                    data_dumping=data_dump,
-                    pldm=pldm, log_dir=log_dir)
+        #using spawn point from yaml file.
+        # sp= carla.Transform(
+        #     carla.Location(
+        #         x=cav_config['spawn_position'][0],
+        #         y=cav_config['spawn_position'][1],
+        #         z=cav_config['spawn_position'][2]),
+        #     carla.Rotation(
+        #         pitch=cav_config['spawn_position'][5],
+        #         yaw=cav_config['spawn_position'][4],
+        #         roll=cav_config['spawn_position'][3]))
 
-                vehicle.set_autopilot(True, tm.get_port())
-                if 'vehicle_speed_perc' in cav_config:
-                    tm.vehicle_percentage_speed_difference(
-                        vehicle, cav_config['vehicle_speed_perc'])
-                tm.auto_lane_change(vehicle, traffic_config['auto_lane_change'])
-                tm.ignore_lights_percentage(vehicle, 0)
+        vehicle = self.world.spawn_actor(cav_vehicle_bp, spawnPoint)
 
-            self.world.tick()
+        # create vehicle manager for each cav
+        vehicle_manager = ExtendedVehicleManager(
+            vehicle, cav_config, application,
+            self.carla_map, self.cav_world,
+            current_time=self.scenario_params['current_time'],
+            data_dumping=data_dump)
 
-            vehicle_manager.v2x_manager.set_platoon(None)
+        self.world.tick()
 
-            destination = carla.Location(x=cav_config['destination'][0],
-                                         y=cav_config['destination'][1],
-                                         z=cav_config['destination'][2])
-            vehicle_manager.update_info_LDM()
-            vehicle_manager.set_destination(
-                vehicle_manager.vehicle.get_location(),
-                destination,
-                clean=True)
+        vehicle_manager.v2x_manager.set_platoon(None)
 
-            single_cav_list.append(vehicle_manager)
+        destination = carla.Location(x=cav_config['destination'][0],
+                                     y=cav_config['destination'][1],
+                                     z=cav_config['destination'][2])
+        vehicle_manager.update_info_LDM()
+        vehicle_manager.set_destination(
+            vehicle_manager.vehicle.get_location(),
+            destination,
+            clean=True)
+        vehicle_manager.vehicle.set_autopilot(True, 8000)
+
+        tm = self.client.get_trafficmanager()
+        tm.auto_lane_change(vehicle, True)
+        tm.ignore_lights_percentage(vehicle_manager.vehicle, 1)
+
+        single_cav_list.append(vehicle_manager)
 
         return single_cav_list
 
@@ -784,6 +753,249 @@ class ScenarioManager:
 
         return rsu_list
 
+
+    def spawn_pedestrian_by_list (self, tm, traffic_config, pedestrian_list):
+        """
+        Spawn the pedestrians by the given list
+
+        Parameters
+        ----------
+        tm : carla.TrafficManager
+            Traffic manager.
+
+        traffic_config : dict
+            Background traffic configuration.
+
+        pedestrian_list : list
+            The list contains all pedestrians.
+
+        Returns
+        -------
+        pedestrians_list : list
+            Update pedestrians list.
+        """
+
+        # list of spawn points for pedestrians near CAV1
+        spawn_point_pedestrians = []
+        i=0
+        while i<400:
+            sp = self.world.get_random_location_from_navigation()
+            spawn_point_pedestrians.append(sp)
+            debug_text = f"ID:{round(i)} X:{sp.x:.1f} Y:{sp.y:.1f}"
+            self.world.debug.draw_string(sp, str(round(i)), False, carla.Color(255, 255, 255),
+                                            100)
+            print(str(round(i)), " : x = ", sp.x, " , y = ", sp.y)
+            i=i+1
+        spectator = self.world.get_spectator()
+        # assign the first CAV as the spectator vehicle
+        #spectator_vehicle = single_cav_list[0].vehicle
+        # get the transform of the spectator vehicle
+        transform = carla.Transform(carla.Location(x=-64,y=24))
+        # set the spectator to the top of the spectator vehicle
+        spectator.set_transform(carla.Transform(transform.location +
+                                                carla.Location(z=110),
+                                                carla.Rotation(pitch=-90)))
+
+        blueprint_library = self.world.get_blueprint_library()
+        walker_controller_bp = blueprint_library.find('controller.ai.walker')
+        SpawnActor = carla.command.SpawnActor
+        batch = []
+        all_id = []
+        all_actors = []
+
+        #Create batch with locations to spawn pedestrians
+        for i, pedestrian_config in enumerate(traffic_config['pedestrian_list']):
+            spawn_transform = carla.Transform(
+                carla.Location(
+                    x=pedestrian_config['spawn_position'][0],
+                    y=pedestrian_config['spawn_position'][1],
+                    z=pedestrian_config['spawn_position'][2]))
+
+            walker_bp = random.choice(blueprint_library.filter('walker.pedestrian.*'))
+            batch.append(SpawnActor(walker_bp, spawn_transform))
+
+            #print spawning points on the map
+            self.world.debug.draw_string(spawn_transform.location, str(round(i)), False, carla.Color(200, 0, 200), 100)
+
+        #Spawn pedestrians
+        results = self.client.apply_batch_sync(batch, True)
+        for i in range(len(results)):
+            if results[i].error:
+                logging.error(results[i].error)
+            else:
+                pedestrian_list.append({"id": results[i].actor_id})
+
+        batch = []
+        for i in range(len(pedestrian_list)):
+            batch.append(SpawnActor(walker_controller_bp, carla.Transform(), pedestrian_list[i]['id']))
+
+        #Spawn controllers
+        results = self.client.apply_batch_sync(batch, True)
+        for i in range(len(results)):
+            if results[i].error:
+                logging.error(results[i].error)
+            else:
+                pedestrian_list[i]['con'] = results[i].actor_id
+
+        for i in range(len(pedestrian_list)):             #pedestrian_list: list of dict {'con': id, 'walker': id}
+            all_id.append(pedestrian_list[i]["con"])      #all_id: list of ids [con, walker, con ,walker...]
+            all_id.append(pedestrian_list[i]["id"])
+        all_actors = self.world.get_actors(all_id)        #all_actors: list of actors [actor con, actor walker, actor con....]
+
+
+        for i in range(0, len(all_id), 2):
+            # start walker
+            all_actors[i].start()
+            # set walk to random point
+            all_actors[i].go_to_location(self.world.get_random_location_from_navigation())
+
+
+        print(len(pedestrian_list), "pedestrians were spawned")
+
+        return all_id
+    def spawn_pedestrian_by_radius (self, tm, traffic_config):
+        """
+        Spawn the pedestrians by the given list
+
+        Parameters
+        ----------
+        tm : carla.TrafficManager
+            Traffic manager.
+
+        traffic_config : dict
+            Background traffic configuration.
+
+        second_pedestrian_list : list
+            The list contains all pedestrians.
+
+        Returns
+        -------
+        pedestrians_list : list
+            Update pedestrians list.
+        """
+
+        # list of spawn points for pedestrians near CAV1
+        # spawn_point_pedestrians = []
+        # i=0
+        # while i<150:
+        #     sp = self.world.get_random_location_from_navigation()
+        #     spawn_point_pedestrians.append(sp)
+        #     self.world.debug.draw_string(sp, str(round(i)), False, carla.Color(200, 0, 200),
+        #                                     100)
+        #     i=i+1
+        # spectator = self.world.get_spectator()
+        # # assign the first CAV as the spectator vehicle
+        # #spectator_vehicle = single_cav_list[0].vehicle
+        # # get the transform of the spectator vehicle
+        # transform = carla.Transform(carla.Location(x=-64,y=24))
+        # # set the spectator to the top of the spectator vehicle
+        # spectator.set_transform(carla.Transform(transform.location +
+        #                                         carla.Location(z=110),
+        #                                         carla.Rotation(pitch=-90)))
+
+
+        blueprint_library = self.world.get_blueprint_library()
+        walker_controller_bp = blueprint_library.find('controller.ai.walker')
+        SpawnActor = carla.command.SpawnActor
+        batch = []
+        all_id = []
+        all_actors = []
+        spawn_point_pedestrians = []
+        i=0
+        j=0
+        second_pedestrian_list = []
+        ped_not_spawned = 0
+        n_pedestrian = traffic_config['n_pedestrian']
+        radius = traffic_config['radius']
+        same_dest = traffic_config['same_destination']
+
+        cav_config = self.scenario_params['scenario']['single_cav_list'][0]
+        if traffic_config['center'] == [0, 0]: #if we do not specify, radius is around cav1
+            center_x = cav_config['spawn_position'][0]
+            center_y = cav_config['spawn_position'][1]
+        else:
+            center_x = traffic_config['center'][0]
+            center_y = traffic_config['center'][1]
+
+        while i < n_pedestrian:
+                sp = self.world.get_random_location_from_navigation()
+                if (center_x-radius < sp.x < center_x+radius) & (center_y-radius < sp.y < center_y+radius):
+                    # spawn_point_pedestrians.append(sp)
+                    walker_bp = random.choice(blueprint_library.filter('walker.pedestrian.*'))
+                    spawnpoint = carla.Transform(carla.Location(sp))
+                    batch.append(SpawnActor(walker_bp, spawnpoint))
+                    i= i+1
+                j=j+1
+
+                if j > 4000:
+                    print('Not enough spawn points for the corresponding radius and number of pedestrians chosen.')
+                    break
+
+
+        #Spawn pedestrians
+        results = self.client.apply_batch_sync(batch, True)
+        for i in range(len(results)):
+            if results[i].error:
+                logging.error(results[i].error)
+                ped_not_spawned = ped_not_spawned + 1
+            else:
+                second_pedestrian_list.append({"id": results[i].actor_id})
+
+        count = 0
+        count2 = 0
+        while count < ped_not_spawned:
+            sp = self.world.get_random_location_from_navigation()
+            if (center_x - radius < sp.x < center_x + radius) & (center_y - radius < sp.y < center_y + radius):
+                walker_bp = random.choice(blueprint_library.filter('walker.pedestrian.*'))
+                spawnpoint = carla.Transform(carla.Location(sp))
+                ped = self.world.try_spawn_actor(walker_bp, spawnpoint)
+                if ped is not None:
+                    second_pedestrian_list.append({"id": ped.id})
+                    count = count + 1
+                    print("New location found")
+            count2 = count2 + 1
+            if count2 > 4000:
+                print('Not enough spawn points for the corresponding radius and number of pedestrians chosen.')
+                break
+
+
+
+        batch = []
+        for i in range(len(second_pedestrian_list)):
+            batch.append(SpawnActor(walker_controller_bp, carla.Transform(), second_pedestrian_list[i]['id']))
+
+        #Spawn controllers
+        results = self.client.apply_batch_sync(batch, True)
+        for i in range(len(results)):
+            if results[i].error:
+                logging.error(results[i].error)
+            else:
+                second_pedestrian_list[i]['con'] = results[i].actor_id
+
+        for i in range(len(second_pedestrian_list)):             #pedestrian_list: list of dict {'con': id, 'walker': id}
+            all_id.append(second_pedestrian_list[i]["con"])      #all_id: list of ids [con, walker, con ,walker...]
+            all_id.append(second_pedestrian_list[i]["id"])
+        all_actors = self.world.get_actors(all_id)        #all_actors: list of actors [actor con, actor walker, actor con....]
+
+        if same_dest:
+            go_to = self.world.get_random_location_from_navigation()
+            for i in range(0, len(all_id), 2):
+                # start walker
+                all_actors[i].start()
+                # set walk to random point
+                all_actors[i].go_to_location(go_to)
+        else:
+            for i in range(0, len(all_id), 2):
+                # start walker
+                all_actors[i].start()
+                # set walk to random point
+                all_actors[i].go_to_location(self.world.get_random_location_from_navigation())
+
+        print(len(second_pedestrian_list), "pedestrians were spawned by range, center = [ ", center_x, ", ", center_y,
+              " ], radius = ", radius)
+
+        return all_id
+
     def spawn_vehicles_by_list(self, tm, traffic_config, bg_list):
         """
         Spawn the traffic vehicles by the given list.
@@ -847,6 +1059,15 @@ class ScenarioManager:
                         ego_vehicle_bp.get_attribute(
                             'color').recommended_values)
                     ego_vehicle_bp.set_attribute('color', color)
+
+            if vehicle_config['blueprint'] == 'bicycle':
+                ego_vehicle_bp = blueprint_library.find('vehicle.bh.crossbike')
+            elif vehicle_config['blueprint'] == 'motorcycle':
+                ego_vehicle_bp = blueprint_library.find('vehicle.harley-davidson.low_rider')
+            else: pass
+
+            # spawnPoints = self.world.get_map().get_spawn_points()
+
 
             vehicle = self.world.spawn_actor(ego_vehicle_bp, spawn_transform)
             vehicle.set_autopilot(True, tm.get_port())
@@ -1013,8 +1234,28 @@ class ScenarioManager:
         else:
             bg_list = self.spawn_vehicle_by_range(tm, traffic_config, bg_list)
 
+        pedestrian_list = []
+        second_pedestrian_list = []
+
+        if 'pedestrian_list' in traffic_config:
+            if isinstance(traffic_config['pedestrian_list'], list) or \
+                    isinstance(traffic_config['pedestrian_list'], ListConfig):
+                pedestrian_list = self.spawn_pedestrian_by_list(tm,
+                                                                traffic_config,
+                                                                pedestrian_list)
+
+        #type(traffic_config['pedestrian_by_radius'])
+        if 'pedestrian_by_radius' in traffic_config:
+            if traffic_config['pedestrian_by_radius'] == True:
+                for i, batch_config in enumerate(traffic_config['spawn_list_by_radius']):
+                    second_pedestrian_list += self.spawn_pedestrian_by_radius(tm,
+                                                                    batch_config)
+
+        all_id = pedestrian_list + second_pedestrian_list
+        pedestrian_list = self.world.get_actors(all_id) # list of actors [actor con, actor walker, actor con....]
+
         print('CARLA traffic flow generated.')
-        return tm, bg_list
+        return tm, bg_list, pedestrian_list
 
     def create_traffic_carla_by_number(self, vehicle_number):
         traffic_config = self.scenario_params['carla_traffic_manager']
@@ -1054,7 +1295,7 @@ class ScenarioManager:
         # iterate over the spawn points and do self.world.debug.draw_string(spawnPoints[i].location, str(round(0)), False, carla.Color(200, 200, 0), 10)
         sps = self.world.get_map().get_spawn_points()
         for i in range(len(sps)):
-            self.worlwd.debug.dwraw_string(sps[i].location, str(round(i)), False, carla.Color(200, 200, 0), 100)
+            self.world.debug.draw_string(sps[i].location, str(round(i)), False, carla.Color(200, 200, 0), 100)
 
         spawn_points = self.world.get_map().get_spawn_points()
         for sp in spawnPoints:

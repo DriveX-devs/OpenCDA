@@ -27,7 +27,7 @@ rsu_base:
     perception:
       activate: false # when not activated, objects positions will be retrieved from server directly
       camera:
-        visualize: 4 # how many camera images need to be visualized. 0 means no visualization for camera
+        visualize: 0 # how many camera images need to be visualized. 0 means no visualization for camera
         num: 4 # how many cameras are mounted on the vehicle. Maximum 3(frontal, left and right cameras)
         # relative positions (x,y,z,yaw) of the camera. len(positions) should be equal to camera num
         positions:
@@ -39,14 +39,14 @@ rsu_base:
         visualize: true
         channels: 32
         range: 120
-        points_per_second: 1000000
+        points_per_second: 560000
         rotation_frequency: 20 # the simulation is 20 fps
-        upper_fov: 2
-        lower_fov: -25
+        upper_fov: 0
+        lower_fov: -20
         dropoff_general_rate: 0.3
         dropoff_intensity_limit: 0.7
         dropoff_zero_intensity: 0.4
-        noise_stddev: 0.02
+        noise_stddev: 0.0
     localization:
       activate: true # when not activated, ego position will be retrieved from server directly
       dt: ${world.fixed_delta_seconds} # used for kalman filter
@@ -68,15 +68,15 @@ vehicle_base:
       lidar: # lidar sensor configuration, check CARLA sensor reference for more details
         visualize: true
         channels: 32
-        range: 50
-        points_per_second: 100000
+        range: 80 #50
+        points_per_second: 655360 #100000
         rotation_frequency: 20 # the simulation is 20 fps
-        upper_fov: 10.0
-        lower_fov: -30.0
-        dropoff_general_rate: 0.0
+        upper_fov: 10
+        lower_fov: -30.0 #-30
+        dropoff_general_rate: 0.3
         dropoff_intensity_limit: 1.0
         dropoff_zero_intensity: 0.0
-        noise_stddev: 0.0
+        noise_stddev: 0.02
 
     localization:
       activate: false # when not activated, ego position will be retrieved from server directly
