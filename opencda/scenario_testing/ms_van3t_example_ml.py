@@ -21,6 +21,7 @@ def run_scenario(opt, scenario_params):
 
         if 'name' in scenario_params['scenario']['town']:
             town = scenario_params['scenario']['town']['name']
+            print('Loading ', town)
         else:
             print('No town name has been specified, please check the yaml file.')
             raise ValueError
@@ -30,15 +31,13 @@ def run_scenario(opt, scenario_params):
                                                    opt.apply_ml,
                                                    opt.version,
                                                    town=town,
-                                                   cav_world=cav_world,
-                                                   carla_host=opt.host,
-                                                   carla_port=opt.port)
+                                                   cav_world=cav_world)
 
         single_cav_list = \
             scenario_manager.create_vehicle_manager(application=['single'])
 
-        traffic_manager, bg_veh_list = \
-            scenario_manager.create_traffic_carla(port=opt.tm_port)
+        traffic_manager, bg_veh_list, all_actors = \
+            scenario_manager.create_traffic_carla()
 
         step_event = Event()
         stop_event = Event()
@@ -51,7 +50,7 @@ def run_scenario(opt, scenario_params):
                                      stop_event=stop_event)
 
         spectator = scenario_manager.world.get_spectator()
-        spectator_vehicle = single_cav_list[3].vehicle
+        spectator_vehicle = single_cav_list[0].vehicle
         transform = spectator_vehicle.get_transform()
         spectator.set_transform(carla.Transform(transform.location +
                                                 carla.Location(z=60),
@@ -67,21 +66,21 @@ def run_scenario(opt, scenario_params):
 
             for i, single_cav in enumerate(single_cav_list):
                 single_cav.update_info_LDM()
-                control = single_cav.run_step()
-                single_cav.vehicle.apply_control(control)
-
-            for actor in scenario_manager.world.get_actors().filter("*vehicle*"):
-                location = actor.get_location()
-                scenario_manager.world.debug.draw_string(location, str(actor.id), False, carla.Color(200, 200, 0))
+                # control = single_cav.run_step()
+                # single_cav.vehicle.apply_control(control)
 
             step_event.set()
             ms_van3t_manager.carla_object.tick_event.wait()
             ms_van3t_manager.carla_object.tick_event.clear()
+
 
     finally:
         stop_event.set() # stop the co-simulation
         step_event.set() # stop the co-simulation
         scenario_manager.close()
         print("Simulation finished.")
+        for i in range(0, len(all_actors), 2):
+            all_actors[i].stop()
+
         for v in single_cav_list:
             v.destroy()

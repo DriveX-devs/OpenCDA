@@ -40,6 +40,16 @@ class CarlaAdapterStub(object):
                 request_serializer=carla__pb2.Number.SerializeToString,
                 response_deserializer=carla__pb2.Vehicle.FromString,
                 )
+        self.GetAllActorsIds = channel.unary_unary(
+                '/carla.CarlaAdapter/GetAllActorsIds',
+                request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                response_deserializer=carla__pb2.ActorIds.FromString,
+                )
+        self.GetActorById = channel.unary_unary(
+                '/carla.CarlaAdapter/GetActorById',
+                request_serializer=carla__pb2.Number.SerializeToString,
+                response_deserializer=carla__pb2.Actor.FromString,
+                )
         self.InsertVehicle = channel.unary_unary(
                 '/carla.CarlaAdapter/InsertVehicle',
                 request_serializer=carla__pb2.Vehicle.SerializeToString,
@@ -135,6 +145,18 @@ class CarlaAdapterServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def GetManagedActorById(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetAllActorsIds(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetActorById(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -245,6 +267,16 @@ def add_CarlaAdapterServicer_to_server(servicer, server):
                     servicer.GetManagedActorById,
                     request_deserializer=carla__pb2.Number.FromString,
                     response_serializer=carla__pb2.Vehicle.SerializeToString,
+            ),
+            'GetAllActorsIds': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetAllActorsIds,
+                    request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                    response_serializer=carla__pb2.ActorIds.SerializeToString,
+            ),
+            'GetActorById': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetActorById,
+                    request_deserializer=carla__pb2.Number.FromString,
+                    response_serializer=carla__pb2.Actor.SerializeToString,
             ),
             'InsertVehicle': grpc.unary_unary_rpc_method_handler(
                     servicer.InsertVehicle,
@@ -403,6 +435,40 @@ class CarlaAdapter(object):
         return grpc.experimental.unary_unary(request, target, '/carla.CarlaAdapter/GetManagedActorById',
             carla__pb2.Number.SerializeToString,
             carla__pb2.Vehicle.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetAllActorsIds(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/carla.CarlaAdapter/GetAllActorsIds',
+            google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            carla__pb2.ActorIds.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetActorById(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/carla.CarlaAdapter/GetActorById',
+            carla__pb2.Number.SerializeToString,
+            carla__pb2.Actor.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 

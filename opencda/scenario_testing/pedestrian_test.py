@@ -25,64 +25,62 @@ def run_scenario(opt, scenario_params):
             print('No town name has been specified, please check the yaml file.')
             raise ValueError
 
-        # create co-simulation scenario manager
+        # create scenario manager
         scenario_manager = sim_api.ScenarioManager(scenario_params,
                                                    opt.apply_ml,
                                                    opt.version,
                                                    town=town,
-                                                   cav_world=cav_world,
                                                    carla_host=opt.host,
-                                                   carla_port=opt.port)
+                                                   carla_port=opt.port,
+                                                   cav_world=cav_world)
 
+        # create CAVs (vehicles equipped with sensors)
         single_cav_list = \
-            scenario_manager.create_vehicle_manager_auto(application=['single'],
-                                                         port=opt.port)
+            scenario_manager.create_vehicle_manager(application=['single'])
 
-        traffic_manager, bg_veh_list = \
-            scenario_manager.create_traffic_carla(port=opt.tm_port)
+        # create background traffic in carla
+        traffic_manager, bg_veh_list, all_actors = \
+            scenario_manager.create_traffic_carla()
 
-        step_event = Event()
-        stop_event = Event()
-        ms_van3t_manager = \
-            MsVan3tCoScenarioManager(scenario_params,
-                                     scenario_manager,
-                                     single_cav_list,
-                                     traffic_manager,
-                                     step_event=step_event,
-                                     stop_event=stop_event)
-
+        # get spectactor
         spectator = scenario_manager.world.get_spectator()
-        spectator_vehicle = single_cav_list[3].vehicle
+        # assign the first CAV as the spectator vehicle
+        spectator_vehicle = single_cav_list[0].vehicle
+        # get the transform of the spectator vehicle
         transform = spectator_vehicle.get_transform()
+        # set the spectator to the top of the spectator vehicle
         spectator.set_transform(carla.Transform(transform.location +
                                                 carla.Location(z=60),
                                                 carla.Rotation(pitch=-90)))
         scenario_manager.tick()
 
-        while True:
+        location = single_cav_list[0].vehicle.get_location()
+        print("CAV spawned location:", location)
 
+        # Simulation loop
+        while True:
+            scenario_manager.tick()
+            # update spectator position
             transform = spectator_vehicle.get_transform()
             spectator.set_transform(carla.Transform(transform.location +
                                                     carla.Location(z=60),
                                                     carla.Rotation(pitch=-90)))
 
             for i, single_cav in enumerate(single_cav_list):
+                # update perception and localization info for CAV
                 single_cav.update_info_LDM()
+                # Vehicle manager set with autopilot --> no control needed
                 # control = single_cav.run_step()
                 # single_cav.vehicle.apply_control(control)
 
-            for actor in scenario_manager.world.get_actors().filter("*vehicle*"):
-                location = actor.get_location()
-                scenario_manager.world.debug.draw_string(location, str(actor.id), False, carla.Color(200, 200, 0))
-
-            step_event.set()
-            ms_van3t_manager.carla_object.tick_event.wait()
-            ms_van3t_manager.carla_object.tick_event.clear()
-
     finally:
-        stop_event.set() # stop the co-simulation
-        step_event.set() # stop the co-simulation
-        scenario_manager.close()
         print("Simulation finished.")
-        for v in single_cav_list:
-            v.destroy()
+        # for v in single_cav_list:
+        #     v.destroy()
+        for i in range(0, len(all_actors), 2):
+            all_actors[i].stop()
+
+        print(f'\nDestroying {int(len(all_actors)/2)} walkers and {int(len(single_cav_list))} CAVs')
+        scenario_manager.destroyActors()
+
+        scenario_manager.close()

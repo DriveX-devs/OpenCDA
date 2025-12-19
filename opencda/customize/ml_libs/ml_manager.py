@@ -66,6 +66,12 @@ class MLManager(object):
 
             if is_vehicle_cococlass(label):
                 label_name = 'vehicle'
+            elif is_pedestrian_cococlass(label):
+                label_name = 'pedestrian'
+            elif label == 1:
+                label_name = 'bicycle'
+            elif label == 3:
+                label_name = 'motorcycle'
 
             x1, y1, x2, y2 = int(
                 detection[0]), int(
@@ -90,5 +96,18 @@ def is_vehicle_cococlass(label):
         -is_vehicle: bool
             whether this label belongs to the vehicle class
     """
-    vehicle_class_array = np.array([1, 2, 3, 5, 7], dtype=np.int)
+    vehicle_class_array = np.array([2, 5, 7], dtype=np.int)
     return True if 0 in (label - vehicle_class_array) else False
+
+def is_pedestrian_cococlass(label):
+    """
+    Check whether the label belongs to the vehicle class according
+    to coco dataset.
+    Args:
+        -label(int): yolo detection prediction.
+    Returns:
+        -is_vehicle: bool
+            whether this label belongs to the vehicle class
+    """
+    VRU_class_array = np.array([0], dtype=np.int)
+    return True if 0 in (label - VRU_class_array) else False

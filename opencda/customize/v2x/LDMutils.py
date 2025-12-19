@@ -1,6 +1,6 @@
 import threading
 
-from opencda.core.common.vehicle_manager import VehicleManager
+# from opencda.core.common.vehicle_manager import VehicleManager
 from collections import deque
 import math
 import numpy as np
@@ -18,6 +18,78 @@ from opencda.customize.v2x.aux import newLDMentry
 from opencda.customize.v2x.aux import PLDMentry
 from opencda.customize.v2x.aux import Perception
 
+class pedestrian_kalman_filter:
+    def __init__(self, initial_timestamp=None, measurement_noise_std=0.5, process_noise_strength=0.5):
+        self.kf = KalmanFilter(dim_x=4, dim_z=2)
+        self.dt = 0.05
+        self.last_update = 0
+        self.last_predict = 0
+        self.kf.H = np.array([[1, 0, 0, 0],
+                              [0, 0, 1, 0]])
+        self.measurement_noise_std = measurement_noise_std
+        self.kf.R = np.diag([self.measurement_noise_std**2, self.measurement_noise_std**2])
+        self.process_noise_strength = process_noise_strength
+        self.update_F_Q_matrices(self.dt) #initialize F and Q matrices
+        self.last_timestamp = initial_timestamp
+        self.is_initialized = False
+
+
+    def update_F_Q_matrices(self, dt):
+        self.kf.F = np.array([[1, dt, 0, 0],
+                              [0, 1, 0, 0],
+                              [0, 0, 1, dt],
+                              [0, 0, 0, 1]])
+        dt2 = dt ** 2
+        dt3 = dt ** 3
+        dt4 = dt ** 4
+
+        self.kf.Q = self.process_noise_strength * np.array([
+            [dt4 / 4, dt3 / 2, 0, 0],
+            [dt3 / 2, dt2, 0, 0],
+            [0, 0, dt4 / 4, dt3 / 2],
+            [0, 0, dt3 / 2, dt2]
+        ])
+    def init_step(self, now, x, y, vx=0, vy=0):
+        # self.kf.P *= 1e-2
+        self.kf.P = np.diag([
+            self.measurement_noise_std**2, # Position x uncertainty (from sensor)
+            2.0**2,                      # Velocity x uncertainty (e.g., 10 m/s initial uncertainty)
+            self.measurement_noise_std**2, # Position y uncertainty
+            2.0**2                       # Velocity y uncertainty
+        ])
+        # Initial state [x, vx, y, vy]
+        self.kf.x = np.array([[x], [vx], [y], [vy]])
+        self.last_timestamp = now
+        self.is_initialized = True
+
+
+
+    def predict(self, now=None):
+        # predict when no vam is received
+        if not self.is_initialized:
+            raise RuntimeError("Filter must be initialized with an update before prediction.")
+        if now is None:
+            raise ValueError("current_timestamp cannot be None for prediction.")
+        if now is not None:
+            dt_actual = (now - self.last_timestamp)/1000
+            if dt_actual > 0:
+                self.update_F_Q_matrices(dt_actual)  # Update F and Q based on actual dt
+                self.kf.predict()  # Perform the prediction using the internal KalmanFilter
+                self.last_timestamp = now  # Update the last known timestamp
+
+        return self.kf.x[0, 0], self.kf.x[2, 0], self.kf.x[1, 0], self.kf.x[3, 0]
+
+    def update(self, measurement_x, measurement_y, now):
+
+        self.predict(now)
+
+        # Form the measurement vector
+        z = np.array([[measurement_x], [measurement_y]])
+        self.kf.update(z)  # Perform the update using the internal KalmanFilter
+
+        self.last_timestamp = now  # Ensure timestamp is accurate after update
+
+        return self.kf.x[0, 0], self.kf.x[2, 0], self.kf.x[1, 0], self.kf.x[3, 0]
 
 class speed_kalman_filter:
     def __init__(self):
@@ -48,7 +120,7 @@ class speed_kalman_filter:
 
 
 class PO_kalman_filter:
-    def __init__(self, dt=0.05):
+    def __init__(self, dt=0.05, Q_noise_std_dev=None, R_std_dev=None, ):
         self.kf = KalmanFilter(dim_x=6, dim_z=2)
         self.dt = dt  # time step
         self.last_predict = 0
@@ -63,10 +135,20 @@ class PO_kalman_filter:
         self.kf.H = np.array([[1, 0, 0, 0, 0, 0],
                               [0, 1, 0, 0, 0, 0]])
         # todo: refine this values
-        self.kf.R = np.array([[10, 0],
-                              [0, 10]])
-        noise_ax = 1
-        noise_ay = 1
+        if R_std_dev is None:
+            self.kf.R = np.array([[10, 0],
+                                  [0, 10]])
+        else:
+            self.kf.R = np.array([[R_std_dev ** 2, 0],
+                                  [0, R_std_dev ** 2]])
+
+        if Q_noise_std_dev is None:
+            noise_ax = 1
+            noise_ay = 1
+        else:
+            noise_ax = Q_noise_std_dev
+            noise_ay = Q_noise_std_dev
+
         self.kf.Q = np.array(
             [[self.dt ** 4 / 4 * noise_ax, 0, self.dt ** 3 / 2 * noise_ax, 0, self.dt ** 2 * noise_ax, 0],
              [0, self.dt ** 4 / 4 * noise_ay, 0, self.dt ** 3 / 2 * noise_ay, 0, self.dt ** 2 * noise_ay],

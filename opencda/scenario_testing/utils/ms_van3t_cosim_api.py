@@ -88,13 +88,77 @@ class CarlaAdapter(carla_pb2_grpc.CarlaAdapterServicer):
         self.steps += 1
         return carla_pb2.Boolean(value=True)
 
-    def GetManagedActorsIds(self, request, context):
+    def GetManagedActorsIds(self, request, context): # return only vehicle id # GetManagedHostIds()
         self.world.get_actors()
         actor_list = self.world.get_actors()
         vehicles = actor_list.filter('vehicle.*')
         returnValue = carla_pb2.ActorIds()
         for vehicle in vehicles:
-            returnValue.actorId.append(vehicle.id)
+            if not ('bicycle' in vehicle.type_id or 'motorcycle' in vehicle.type_id):
+                returnValue.actorId.append(vehicle.id)
+        return returnValue
+
+    def GetAllActorsIds(self, request, context):  # return vehicle and pedestrian id
+        self.world.get_actors()
+        actor_list = self.world.get_actors()
+        returnValue = carla_pb2.ActorIds()
+        for actor in actor_list:
+            if 'vehicle' in actor.type_id or 'pedestrian' in actor.type_id:
+                returnValue.actorId.append(actor.id)
+        return returnValue
+
+    def GetActorById(self, request, context):
+        actor_list = self.world.get_actors()
+        actor = actor_list.find(request.num)
+        aLocation = actor.get_location()
+        aSpeed = actor.get_velocity()
+        aAcceleration = actor.get_acceleration()
+        returnValue = carla_pb2.Actor()
+        returnValue.id = request.num
+        returnValue.location.x = aLocation.x
+        returnValue.location.y = aLocation.y
+        returnValue.location.z = aLocation.z
+        returnValue.speed.x = aSpeed.x
+        returnValue.speed.y = aSpeed.y
+        returnValue.speed.z = aSpeed.z
+
+        geoPos = self.world.get_map().transform_to_geolocation(aLocation)
+        returnValue.latitude = geoPos.latitude
+        returnValue.longitude = geoPos.longitude
+        returnValue.length = actor.bounding_box.extent.x * 2
+        returnValue.width = actor.bounding_box.extent.y * 2
+
+        if 'vehicle' in actor.type_id:
+            returnValue.lane = abs(self.world.get_map().get_waypoint(aLocation).lane_id)
+            returnValue.heading = actor.get_transform().rotation.yaw
+            returnValue.transform.location.x = actor.get_transform().location.x
+            returnValue.transform.location.y = actor.get_transform().location.y
+            returnValue.transform.location.z = actor.get_transform().location.z
+            returnValue.transform.rotation.pitch = actor.get_transform().rotation.pitch
+            returnValue.transform.rotation.yaw = actor.get_transform().rotation.yaw
+            returnValue.transform.rotation.roll = actor.get_transform().rotation.roll
+            if 'bike' in actor.type_id:
+                returnValue.itsType = 1
+            elif 'harley' in actor.type_id:
+                returnValue.itsType = 3
+            else:
+                returnValue.itsType = 2
+
+        elif 'pedestrian' in actor.type_id:
+            returnValue.lane = 0
+            returnValue.heading = actor.get_transform().rotation.yaw
+            if actor.get_transform().rotation.yaw < 0:
+                returnValue.heading += 360
+            elif actor.get_transform().rotation.yaw > 360:
+                returnValue.heading -= 360
+            returnValue.transform.location.x = actor.get_transform().location.x
+            returnValue.transform.location.y = actor.get_transform().location.y
+            returnValue.transform.location.z = actor.get_transform().location.z
+            returnValue.transform.rotation.pitch = 0
+            returnValue.transform.rotation.yaw = returnValue.heading
+            returnValue.transform.rotation.roll = 0
+            returnValue.itsType = 0
+
         return returnValue
 
     def GetManagedActorById(self, request, context):
@@ -123,8 +187,16 @@ class CarlaAdapter(carla_pb2_grpc.CarlaAdapterServicer):
         returnValue.width = actor.bounding_box.extent.y * 2
         # print("bounding box: " + str(actor.bounding_box.extent.x) + ", " + str(actor.bounding_box.extent.y))
         # I take abs of lane_id https://github.com/carla-simulator/carla/issues/1469
-        returnValue.lane = abs(self.world.get_map().get_waypoint(aLocation).lane_id)
-        returnValue.heading = actor.get_transform().rotation.yaw
+        if 'vehicle' in actor.type_id:
+            returnValue.lane = abs(self.world.get_map().get_waypoint(aLocation).lane_id)
+            returnValue.heading = actor.get_transform().rotation.yaw
+        elif 'pedestrian' in actor.type_id:
+            returnValue.lane = 0
+            returnValue.heading = actor.get_transform().rotation.yaw
+            if actor.get_transform().rotation.yaw < 0:
+                returnValue.heading += 360
+            elif actor.get_transform().rotation.yaw > 360:
+                returnValue.heading -= 360
         # This is redundant, but for CARLA compliance
         returnValue.transform.location.x = actor.get_transform().location.x
         returnValue.transform.location.y = actor.get_transform().location.y
@@ -284,7 +356,8 @@ class CarlaAdapter(carla_pb2_grpc.CarlaAdapterServicer):
                     ego_pos, ego_spd, objects = cav.getInfo()
                     returnValue = carla_pb2.Objects()
                     for PO in cav.LDM.getAllPOs():
-                        if (not PO.connected and PO.tracked and PO.onSight) or PO.CPM:
+                        # if (PO.detected and PO.onSight) or PO.CPM or PO.VAM:
+                        if (PO.detected and PO.tracked and PO.onSight) or PO.CPM or PO.VAM:
                             object = carla_pb2.Object()
                             object.id = PO.id
                             if PO.CPM and len(PO.perceivedBy) == 0:
@@ -294,34 +367,62 @@ class CarlaAdapter(carla_pb2_grpc.CarlaAdapterServicer):
                             object.speed.x = PO.perception.xSpeed
                             object.speed.y = PO.perception.ySpeed
                             object.speed.z = 0
+                            if 70 < PO.id < 80:
+                                print(f"Actor {PO.id} - speed x = {PO.perception.xSpeed}, y = {PO.perception.ySpeed}")
                             object.acceleration.x = PO.perception.xacc
                             object.acceleration.y = PO.perception.yacc
                             object.acceleration.z = 0
-                            object.width = PO.perception.width
                             object.length = PO.perception.length
+                            object.width = PO.perception.width
                             object.onSight = PO.onSight
                             object.tracked = PO.tracked
                             object.timestamp = int(1000 * (PO.getLatestPoint().timestamp - self.time_offset))
                             object.confidence = PO.perception.confidence
-                            if PO.perception.yaw < 0:
-                                object.yaw = PO.perception.yaw + 360
-                            else:
-                                object.yaw = PO.perception.yaw
-
-                            curr_wpt = self.world.get_map().get_waypoint(carla.Location(x=PO.perception.xPosition, y=PO.perception.yPosition, z=0.0))
+                            # if PO.perception.yaw < 0:
+                            #     object.yaw = PO.perception.yaw + 360
+                            # else:
+                            #     object.yaw = PO.perception.yaw
+                            # get_waypoint DOES NOT WORK FOR PEDESTRIANS
+                            if any(x in PO.perception.itsType for x in ('vehicle', 'bicycle', 'motorcycle')):
+                                curr_wpt = self.world.get_map().get_waypoint(carla.Location(x=PO.perception.xPosition, y=PO.perception.yPosition, z=0.0))
+                                object.yaw = curr_wpt.transform.rotation.yaw
+                            elif PO.perception.itsType == 'pedestrian':
+                                try:
+                                    curr_wpt = self.world.get_actors().find(object.id).get_transform()
+                                    object.yaw = curr_wpt.rotation.yaw
+                                except AttributeError:
+                                    print(f"Error: Actor with ID {object.id} not found in the CARLA world.")
+                                    continue
+                                    curr_wpt = None  # Or assign a default value, raise another exception, etc.
+                                    object.yaw = 0
                             # TODO: this is a workaround, the yaw should be the one from the perception, but pose estimation is not reliable
-                            object.yaw = curr_wpt.transform.rotation.yaw
+                            if object.yaw < 0:
+                                object.yaw += 360
+                            if object.yaw > 360:
+                                object.yaw -= 360
                             object.transform.location.x = PO.perception.xPosition
                             object.transform.location.y = PO.perception.yPosition
                             object.transform.location.z = 0
                             object.transform.rotation.pitch = 0
                             object.transform.rotation.yaw = PO.perception.yaw
                             object.transform.rotation.roll = 0
-                            object.detected = not PO.connected
+                            object.detected = PO.detected
                             if len(PO.perceivedBy) > 0:
                                 object.perceivedBy = PO.perceivedBy[0]
                             else:
                                 object.perceivedBy = -1
+                            if PO.perception.itsType == 'vehicle':
+                                object.itsType = 2
+                            elif PO.perception.itsType == 'pedestrian':
+                                object.itsType = 0
+                            elif PO.perception.itsType == 'bicycle':
+                                object.itsType = 1
+                            elif PO.perception.itsType == 'motorcycle':
+                                object.itsType = 3
+                            elif PO.perception.itsType == 'unknown':
+                                object.itsType = 4
+                            object.VAM = PO.VAM
+
                             returnValue.objects.append(object)
                     return returnValue
 
@@ -430,11 +531,20 @@ class CarlaAdapter(carla_pb2_grpc.CarlaAdapterServicer):
                 newPO.heading = request.object.yaw
                 newPO.yaw = request.object.yaw
                 newPO.id = request.object.id
+                if (request.object.itsType == 2):
+                    newPO.itsType = "vehicle"
+                if (request.object.itsType == 0):
+                    newPO.itsType = "pedestrian"
+                if (request.object.itsType == 1):
+                    newPO.itsType = "bicycle"
+                if (request.object.itsType == 3):
+                    newPO.itsType = "motorcycle"
                 toInsert = [newPO]
                 cav.ldm_mutex.acquire()
-                if request.object.detected:
+                if request.object.VAM:
+                    cav.LDM.VAMfusion(newPO)
+                elif request.object.detected:
                     cav.LDM.CPMfusion(toInsert, request.fromId)
-
                 else:
                     cav.LDM.CAMfusion(newPO)
                 cav.ldm_mutex.release()

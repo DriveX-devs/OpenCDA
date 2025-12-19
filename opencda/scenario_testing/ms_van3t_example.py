@@ -30,9 +30,7 @@ def run_scenario(opt, scenario_params):
                                                    opt.apply_ml,
                                                    opt.version,
                                                    town=town,
-                                                   cav_world=cav_world,
-                                                   carla_host=opt.host,
-                                                   carla_port=opt.port)
+                                                   cav_world=cav_world)
 
         single_cav_list = \
             scenario_manager.create_vehicle_manager(application=['single'])
@@ -69,10 +67,6 @@ def run_scenario(opt, scenario_params):
                 single_cav.update_info_LDM()
                 control = single_cav.run_step()
                 single_cav.vehicle.apply_control(control)
-
-            for actor in scenario_manager.world.get_actors().filter("*vehicle*"):
-                location = actor.get_location()
-                scenario_manager.world.debug.draw_string(location, str(actor.id), False, carla.Color(200, 200, 0))
 
             step_event.set()
             ms_van3t_manager.carla_object.tick_event.wait()

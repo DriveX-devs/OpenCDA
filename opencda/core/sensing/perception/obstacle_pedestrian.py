@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Obstacle vehicle class to save object detection.
+Obstacle pedestrian class to save object detection.
 """
 
 # Author: Runsheng Xu <rxx3386@ucla.edu>
@@ -15,32 +15,9 @@ import opencda.core.sensing.perception.sensor_transformation as st
 from opencda.core.common.misc import get_speed_sumo
 
 
-def is_vehicle_cococlass(label):
-    """
-    Check whether the label belongs to the vehicle class
-    according to coco dataset.
-    Args:
-        -label(int): The lable of the detecting object.
-
-    Returns:
-        -is_vehicle(bool): Whether this label belongs to the vehicle class
-
-    0 - pedestrian
-    1 - bicycle
-    2 - car
-    3 - motorcycle
-    4 - airplane
-    5 - bus
-    6 - train
-    7 - truck
-    """
-
-    vehicle_class_array = np.array([2, 5, 7], dtype=np.int)
-    return True if 0 in (label - vehicle_class_array) else False
-
 class BoundingBox(object):
     """
-    Bounding box class for obstacle vehicle.
+    Bounding box class for obstacle pedestrian.
 
     Params:
     -corners : nd.nparray
@@ -65,10 +42,10 @@ class BoundingBox(object):
         self.extent = carla.Vector3D(x=extent_x, y=extent_y, z=extent_z)
 
 
-class ObstacleVehicle(object):
+class ObstacleVRU(object):
     """
-    A class for obstacle vehicle. The attributes are designed to match
-    with carla.Vehicle class.
+    A class for obstacle pedestrian. The attributes are designed to match
+    with carla.Walker class.
 
     Parameters
     ----------
@@ -99,20 +76,17 @@ class ObstacleVehicle(object):
     location : carla.location
         Location of the object.
 
-    velocity : carla.Vector3D
-        Velocity of the object vehicle.
-
     carla_id : int
-        The obstacle vehicle's id. It should be the same with the
-        corresponding carla.Vehicle's id. If no carla vehicle is
-        matched with the obstacle vehicle, it should be -1.
+        The obstacle pedestrian's id. It should be the same with the
+        corresponding carla.walker's id. If no carla walker is
+        matched with the obstacle pedestrian, it should be -1.
     """
 
     def __init__(self, corners, o3d_bbx,
-                 vehicle=None, lidar=None, sumo2carla_ids=None, confidence=0.0):
+                 VRU=None, lidar=None, sumo2carla_ids=None, confidence=0.0, itsType = 'pedestrian'):
 
         self.o3d_obb = None
-        if not vehicle:
+        if not VRU:
             self.bounding_box = BoundingBox(corners)
             self.location = self.bounding_box.location
             # todo: next version will add rotation estimation
@@ -121,12 +95,12 @@ class ObstacleVehicle(object):
             self.carla_id = -1
             self.velocity = carla.Vector3D(0.0, 0.0, 0.0)
             self.yaw = 0.0
+            self.itsType = 'pedestrian'
             self.confidence = confidence
-            self.itsType = 'vehicle'
         else:
             if sumo2carla_ids is None:
                 sumo2carla_ids = dict()
-            self.set_vehicle(vehicle, lidar, sumo2carla_ids)
+            self.set_VRU(VRU, lidar, sumo2carla_ids)
             self.confidence = 100.0  # They are ground truth perceptions
 
     def get_transform(self):
@@ -170,18 +144,14 @@ class ObstacleVehicle(object):
         """
         self.velocity = velocity
 
-    def set_vehicle(self, vehicle, lidar, sumo2carla_ids):
+    def set_VRU(self, VRU, lidar, sumo2carla_ids):
         """
-        Assign the attributes from carla.Vehicle to ObstacleVehicle.
+        Assign the attributes from carla.Walker to ObstaclePedestrian.
 
         Parameters
         ----------
-        vehicle : carla.Vehicle
-            The carla.Vehicle object.
-
-        lidar : carla.sensor.lidar
-            The lidar sensor, it is used to project world coordinates to
-             sensor coordinates.
+        VRU : carla.Walker
+            The carla.Walker object.
 
         sumo2carla_ids : dict
             Sumo to carla mapping dictionary, this is used only when
@@ -190,17 +160,13 @@ class ObstacleVehicle(object):
             server. We will need this dict to read vehicle speed
             from sumo api--traci.
         """
-        self.location = vehicle.get_location()
-        self.transform = vehicle.get_transform()
-        self.yaw = self.transform.rotation.yaw
-        self.bounding_box = vehicle.bounding_box
-        self.carla_id = vehicle.id
-        self.type_id = vehicle.type_id
-        self.color = vehicle.attributes["color"] \
-            if hasattr(vehicle, "attributes") \
-               and "color" in vehicle.attributes else None
+        self.location = VRU.get_location()
+        self.transform = VRU.get_transform()
+        self.bounding_box = VRU.bounding_box
+        self.carla_id = VRU.id
+        self.type_id = VRU.type_id
+        self.set_velocity(VRU.get_velocity())
 
-        self.set_velocity(vehicle.get_velocity())
         # the vehicle controlled by sumo has speed 0 in carla,
         # thus we need to retrieve the correct number from sumo
         if len(sumo2carla_ids) > 0:
