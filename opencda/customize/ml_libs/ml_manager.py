@@ -36,7 +36,7 @@ class MLManager(object):
         print ("Using device: ", os.environ["CUDA_VISIBLE_DEVICES"])
         torch.cuda.set_device(self.device)
         # self.object_detector = torch.hub.load('ultralytics/yolov5', 'yolov5m').to(self.device)
-        self.object_detector = torch.hub.load('ultralytics/yolov5', 'yolov5s', device=self.device).to(self.device)
+        self.object_detector = torch.hub.load('ultralytics/yolov5:v7.0', 'yolov5s', device=self.device).to(self.device)
 
     def draw_2d_box(self, result, rgb_image, index):
         """

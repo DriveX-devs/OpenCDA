@@ -78,6 +78,9 @@ def run_scenario(opt, scenario_params):
             ms_van3t_manager.carla_object.tick_event.wait()
             ms_van3t_manager.carla_object.tick_event.clear()
 
+    except Exception as e:
+        print("Exception detected during the simulation: %s" % str(e))
+
     finally:
         stop_event.set() # stop the co-simulation
         step_event.set() # stop the co-simulation
