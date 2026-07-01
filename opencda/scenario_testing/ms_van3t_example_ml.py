@@ -51,7 +51,7 @@ def run_scenario(opt, scenario_params):
                                      stop_event=stop_event)
 
         spectator = scenario_manager.world.get_spectator()
-        spectator_vehicle = single_cav_list[3].vehicle
+        spectator_vehicle = single_cav_list[-1].vehicle
         transform = spectator_vehicle.get_transform()
         spectator.set_transform(carla.Transform(transform.location +
                                                 carla.Location(z=60),
