@@ -17,6 +17,7 @@ from shapely.geometry import Polygon
 
 from opencda.core.sensing.perception.sensor_transformation import \
     world_to_sensor
+from opencda.core.common import frame_dump
 from opencda.core.map.map_utils import \
     lateral_shift, list_loc2array, list_wpt2array, convert_tl_status
 from opencda.core.map.map_drawing import \
@@ -90,6 +91,7 @@ class MapManager(object):
         self.agent_id = vehicle.id
         self.carla_map = carla_map
         self.center = None
+        self.frame_count = 0
 
         self.actvate = config['activate']
         self.visualize = config['visualize']
@@ -147,9 +149,15 @@ class MapManager(object):
         self.rasterize_static()
         self.rasterize_dynamic()
         if self.visualize:
+            frame_path = frame_dump.make_path(
+                ["actor_%s" % self.agent_id, "bev_map"],
+                "%06d.png" % self.frame_count)
+            if frame_path:
+                cv2.imwrite(frame_path, self.vis_bev)
             cv2.imshow('the bev map of agent %s' % self.agent_id,
                        self.vis_bev)
             cv2.waitKey(1)
+        self.frame_count += 1
 
     @staticmethod
     def get_bounds(left_lane, right_lane):

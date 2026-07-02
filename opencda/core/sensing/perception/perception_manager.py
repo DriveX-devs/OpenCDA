@@ -19,6 +19,7 @@ import random
 import opencda.core.sensing.perception.sensor_transformation as st
 from opencda.core.common.misc import \
     cal_distance_angle, get_speed, get_speed_sumo
+from opencda.core.common import frame_dump
 from opencda.core.sensing.perception.obstacle_vehicle import \
     ObstacleVehicle
 from opencda.core.sensing.perception.static_obstacle import TrafficLight
@@ -775,6 +776,11 @@ class PerceptionManager:
                 rgb_image = self.ml_manager.draw_2d_box(
                     yolo_detection, rgb_image, i)
                 rgb_image = cv2.resize(rgb_image, (0, 0), fx=0.4, fy=0.4)
+                frame_path = frame_dump.make_path(
+                    ["actor_%s" % self.id, "camera_%s_active" % i],
+                    "%06d.png" % self.count)
+                if frame_path:
+                    cv2.imwrite(frame_path, rgb_image)
                 cv2.imshow(
                     '%s-th camera of actor %d, perception activated' %
                     (str(i), self.id), rgb_image)
@@ -882,6 +888,11 @@ class PerceptionManager:
                                                                i)
                 # resize to make it fittable to the screen
                 rgb_image = cv2.resize(rgb_image, (0, 0), fx=0.4, fy=0.4)
+                frame_path = frame_dump.make_path(
+                    ["actor_%s" % self.id, "camera_%s_deactivated" % i],
+                    "%06d.png" % self.count)
+                if frame_path:
+                    cv2.imwrite(frame_path, rgb_image)
 
                 # show image using cv2
                 cv2.imshow(

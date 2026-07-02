@@ -18,6 +18,7 @@ import opencda.core.sensing.perception.sensor_transformation as st
 from opencda.core.sensing.perception.obstacle_vehicle import \
     is_vehicle_cococlass, ObstacleVehicle
 from opencda.core.sensing.perception.static_obstacle import StaticObstacle
+from opencda.core.common import frame_dump
 
 VIRIDIS = np.array(cm.get_cmap('plasma').colors)
 VID_RANGE = np.linspace(0.0, 1.0, VIRIDIS.shape[0])
@@ -46,6 +47,8 @@ LABEL_COLORS = np.array([
     (45, 60, 150),  # Water
     (145, 170, 100),  # Terrain
 ]) / 255.0  # normalize each channel [0-1] since is what Open3D uses
+
+_VISUALIZER_ACTOR_IDS = {}
 
 
 def o3d_pointcloud_encode(raw_data, point_cloud):
@@ -104,6 +107,7 @@ def o3d_visualizer_init(actor_id):
     vis.get_render_option().background_color = [0, 0, 0]
     vis.get_render_option().point_size = 1
     vis.get_render_option().show_coordinate_frame = True
+    _VISUALIZER_ACTOR_IDS[id(vis)] = actor_id
 
     return vis
 
@@ -169,6 +173,12 @@ def o3d_visualizer_show(vis, count, point_cloud, objects, LDM=False):
 
     vis.poll_events()
     vis.update_renderer()
+    actor_id = _VISUALIZER_ACTOR_IDS.get(id(vis), "unknown")
+    frame_path = frame_dump.make_path(
+        ["visualizer_%s" % actor_id, "lidar_view"],
+        "%06d.png" % count)
+    if frame_path:
+        vis.capture_screen_image(frame_path, do_render=True)
     # # This can fix Open3D jittering issues:
     time.sleep(0.001)
 
@@ -268,6 +278,12 @@ def o3d_visualizer_showLDM(vis, count, point_cloud, objects, groundTruth):
 
     vis.poll_events()
     vis.update_renderer()
+    actor_id = _VISUALIZER_ACTOR_IDS.get(id(vis), "unknown")
+    frame_path = frame_dump.make_path(
+        ["visualizer_%s" % actor_id, "ldm_view"],
+        "%06d.png" % count)
+    if frame_path:
+        vis.capture_screen_image(frame_path, do_render=True)
     # # This can fix Open3D jittering issues:
     time.sleep(0.001)
 

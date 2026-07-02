@@ -13,9 +13,32 @@ from threading import Event
 from opencda.scenario_testing.utils.ms_van3t_cosim_api import MsVan3tCoScenarioManager
 
 
+def _safe_path_part(value):
+    return ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in str(value))
+
+
+def _top_view_transform(vehicle):
+    transform = vehicle.get_transform()
+    return carla.Transform(transform.location + carla.Location(z=60),
+                           carla.Rotation(pitch=-90))
+
+
 def run_scenario(opt, scenario_params):
+    top_view_camera = None
     try:
         scenario_params = add_current_time(scenario_params)
+        frame_dump_dir = os.environ.get('OPENCDA_FRAME_DUMP_DIR')
+        if not frame_dump_dir:
+            frame_dump_dir = os.path.join(
+                os.getcwd(),
+                'visualization_frames',
+                'ms_van3t_example_ml_%s' %
+                _safe_path_part(scenario_params['current_time']))
+            os.environ['OPENCDA_FRAME_DUMP_DIR'] = frame_dump_dir
+        os.makedirs(frame_dump_dir, exist_ok=True)
+        print('Saving OpenCDA visualization frames to %s' % frame_dump_dir)
+        carla_top_view_dir = os.path.join(frame_dump_dir, 'Carla_top_view')
+        os.makedirs(carla_top_view_dir, exist_ok=True)
 
         cav_world = CavWorld(opt.apply_ml)
 
@@ -52,18 +75,33 @@ def run_scenario(opt, scenario_params):
 
         spectator = scenario_manager.world.get_spectator()
         spectator_vehicle = single_cav_list[-1].vehicle
-        transform = spectator_vehicle.get_transform()
-        spectator.set_transform(carla.Transform(transform.location +
-                                                carla.Location(z=60),
-                                                carla.Rotation(pitch=-90)))
+        top_view_transform = _top_view_transform(spectator_vehicle)
+        spectator.set_transform(top_view_transform)
+
+        camera_bp = scenario_manager.world.get_blueprint_library().find(
+            'sensor.camera.rgb')
+        camera_bp.set_attribute('image_size_x', '1280')
+        camera_bp.set_attribute('image_size_y', '720')
+        camera_bp.set_attribute('fov', '90')
+        top_view_camera = scenario_manager.world.spawn_actor(
+            camera_bp,
+            top_view_transform)
+        top_view_frame = [0]
+
+        def save_top_view(image):
+            image.save_to_disk(
+                os.path.join(carla_top_view_dir,
+                             '%06d.png' % top_view_frame[0]))
+            top_view_frame[0] += 1
+
+        top_view_camera.listen(save_top_view)
         scenario_manager.tick()
 
         while True:
 
-            transform = spectator_vehicle.get_transform()
-            spectator.set_transform(carla.Transform(transform.location +
-                                                    carla.Location(z=60),
-                                                    carla.Rotation(pitch=-90)))
+            top_view_transform = _top_view_transform(spectator_vehicle)
+            spectator.set_transform(top_view_transform)
+            top_view_camera.set_transform(top_view_transform)
 
             for i, single_cav in enumerate(single_cav_list):
                 single_cav.update_info_LDM()
@@ -82,6 +120,9 @@ def run_scenario(opt, scenario_params):
         print("Exception detected during the simulation: %s" % str(e))
 
     finally:
+        if top_view_camera is not None:
+            top_view_camera.stop()
+            top_view_camera.destroy()
         stop_event.set() # stop the co-simulation
         step_event.set() # stop the co-simulation
         scenario_manager.close()
